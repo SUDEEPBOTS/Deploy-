@@ -7,11 +7,9 @@ app = Flask(__name__, template_folder='../templates')
 
 # --- CONFIGURATION ---
 ADMIN_PASS = "sudeep123"
+MONGO_URI = os.environ.get("MONGO_URI") # Vercel Env Var
 
-# MongoDB Connection (Vercel ke Environment Variable se lega)
-# Agar local run kar raha hai toh direct string daal sakta hai, par Vercel pe Env Var best hai.
-MONGO_URI = os.environ.get("MONGO_URI")
-
+# Database Connection
 try:
     client = MongoClient(MONGO_URI)
     db = client.get_database("render_deployer")
@@ -29,7 +27,6 @@ def home():
 def admin_page():
     return render_template('admin.html')
 
-# --- ADD ACCOUNT (Saves to MongoDB) ---
 @app.route('/api/add_key', methods=['POST'])
 def add_key():
     data = request.json
@@ -37,33 +34,27 @@ def add_key():
         return jsonify({"error": "Wrong Password!"}), 403
     
     new_key = data.get('key')
-    
-    # Check if key already exists
     if accounts_col.find_one({"api_key": new_key}):
         return jsonify({"error": "Key already exists!"}), 400
 
     if new_key:
-        # Save to DB
         accounts_col.insert_one({"api_key": new_key})
-        count = accounts_col.count_documents({})
-        return jsonify({"message": f"Saved to DB! Total Accounts: {count}"})
+        return jsonify({"message": "Saved to DB!"})
     
     return jsonify({"error": "Invalid Key"}), 400
 
-# --- DEPLOY LOGIC (Fetches from MongoDB) ---
+# --- FIXED DEPLOY LOGIC ---
 @app.route('/api/deploy', methods=['POST'])
 def deploy():
     data = request.json
     repo = data.get('repo')
     env_vars_text = data.get('env')
     
-    # Database se saari keys nikalo
     all_accounts = list(accounts_col.find({}))
-    
     if not all_accounts:
-        return jsonify({"status": "error", "message": "No Accounts found in Database!"})
+        return jsonify({"status": "error", "message": "No Accounts in Database!"})
 
-    # Convert Env Text to Render JSON
+    # Env Vars Parsing
     env_vars = []
     if env_vars_text:
         for line in env_vars_text.split('\n'):
@@ -71,32 +62,40 @@ def deploy():
                 k, v = line.split('=', 1)
                 env_vars.append({"key": k.strip(), "value": v.strip()})
 
-    # --- LOAD BALANCER ---
     selected_key = None
-    
-    # Har saved account ko check karo
+    owner_id = None  # Variable to store Owner ID
+
+    # --- LOAD BALANCER & OWNER CHECK ---
     for acc in all_accounts:
         key = acc['api_key']
         headers = {"Authorization": f"Bearer {key}"}
         
         try:
-            # Render API se pucho: "Kitne services hain?"
+            # Step 1: Check Services Count
             res = requests.get("https://api.render.com/v1/services?limit=20", headers=headers)
             if res.status_code == 200:
                 services = res.json()
-                # Agar 2 se kam hain, toh ye account select kar lo
-                if len(services) < 2:
-                    selected_key = key
-                    break
+                if len(services) < 5:  # Limit 2 se badha kar 5 kar sakte ho agar chahiye
+                    
+                    # Step 2: FETCH OWNER ID (Ye zaroori hai!)
+                    owner_res = requests.get("https://api.render.com/v1/owners", headers=headers)
+                    if owner_res.status_code == 200:
+                        owners = owner_res.json()
+                        # Pehla owner utha lo (usually user khud hota hai)
+                        owner_id = owners[0]['id']
+                        selected_key = key
+                        break
         except:
             continue
     
-    if not selected_key:
-        return jsonify({"status": "error", "message": "All Accounts are FULL (2/2)!"})
+    if not selected_key or not owner_id:
+        return jsonify({"status": "error", "message": "All Accounts FULL or Owner ID Error!"})
 
-    # --- DEPLOY REQUEST ---
+    # --- DEPLOY REQUEST (With Owner ID) ---
     deploy_url = "https://api.render.com/v1/services"
+    
     payload = {
+        "ownerId": owner_id,  # <--- YAHAN FIX HUA HAI
         "type": "web_service",
         "serviceDetails": {
             "name": f"bot-{len(env_vars)}", 
@@ -121,6 +120,7 @@ def deploy():
             "account_used": f"...{selected_key[-5:]}"
         })
     else:
+        # Error detail print karo debug ke liye
         return jsonify({"status": "error", "message": response.text})
 
 if __name__ == '__main__':
