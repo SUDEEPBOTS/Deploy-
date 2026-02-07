@@ -1,16 +1,25 @@
 from flask import Flask, render_template, request, jsonify
 import requests
+import os
+from pymongo import MongoClient
 
 app = Flask(__name__, template_folder='../templates')
 
-# Admin Password
+# --- CONFIGURATION ---
 ADMIN_PASS = "sudeep123"
 
-# Temporary Storage for API Keys (Note: Vercel serverless reset hota hai, 
-# permanent ke liye MongoDB lagana padega baad mein)
-RENDER_KEYS = [
-    # "rnd_ExampleKey1............",
-]
+# MongoDB Connection (Vercel ke Environment Variable se lega)
+# Agar local run kar raha hai toh direct string daal sakta hai, par Vercel pe Env Var best hai.
+MONGO_URI = os.environ.get("MONGO_URI")
+
+try:
+    client = MongoClient(MONGO_URI)
+    db = client.get_database("render_deployer")
+    accounts_col = db.get_collection("accounts")
+    print("✅ MongoDB Connected!")
+except Exception as e:
+    print(f"❌ Database Error: {e}")
+    accounts_col = None
 
 @app.route('/')
 def home():
@@ -20,6 +29,7 @@ def home():
 def admin_page():
     return render_template('admin.html')
 
+# --- ADD ACCOUNT (Saves to MongoDB) ---
 @app.route('/api/add_key', methods=['POST'])
 def add_key():
     data = request.json
@@ -27,38 +37,54 @@ def add_key():
         return jsonify({"error": "Wrong Password!"}), 403
     
     new_key = data.get('key')
-    if new_key and new_key not in RENDER_KEYS:
-        RENDER_KEYS.append(new_key)
-        return jsonify({"message": f"Key Added! Total Accounts: {len(RENDER_KEYS)}"})
-    return jsonify({"error": "Invalid or Duplicate Key"}), 400
+    
+    # Check if key already exists
+    if accounts_col.find_one({"api_key": new_key}):
+        return jsonify({"error": "Key already exists!"}), 400
 
+    if new_key:
+        # Save to DB
+        accounts_col.insert_one({"api_key": new_key})
+        count = accounts_col.count_documents({})
+        return jsonify({"message": f"Saved to DB! Total Accounts: {count}"})
+    
+    return jsonify({"error": "Invalid Key"}), 400
+
+# --- DEPLOY LOGIC (Fetches from MongoDB) ---
 @app.route('/api/deploy', methods=['POST'])
 def deploy():
     data = request.json
     repo = data.get('repo')
     env_vars_text = data.get('env')
     
-    if not RENDER_KEYS:
-        return jsonify({"status": "error", "message": "No Render Accounts configured!"})
+    # Database se saari keys nikalo
+    all_accounts = list(accounts_col.find({}))
+    
+    if not all_accounts:
+        return jsonify({"status": "error", "message": "No Accounts found in Database!"})
 
-    # Convert Env Text to Render JSON format
+    # Convert Env Text to Render JSON
     env_vars = []
-    for line in env_vars_text.split('\n'):
-        if '=' in line:
-            k, v = line.split('=', 1)
-            env_vars.append({"key": k.strip(), "value": v.strip()})
+    if env_vars_text:
+        for line in env_vars_text.split('\n'):
+            if '=' in line:
+                k, v = line.split('=', 1)
+                env_vars.append({"key": k.strip(), "value": v.strip()})
 
-    # --- LOAD BALANCER LOGIC ---
+    # --- LOAD BALANCER ---
     selected_key = None
     
-    for key in RENDER_KEYS:
+    # Har saved account ko check karo
+    for acc in all_accounts:
+        key = acc['api_key']
         headers = {"Authorization": f"Bearer {key}"}
-        # Check current services count
+        
         try:
+            # Render API se pucho: "Kitne services hain?"
             res = requests.get("https://api.render.com/v1/services?limit=20", headers=headers)
             if res.status_code == 200:
                 services = res.json()
-                # Check if account has less than 2 services (Modify limit as needed)
+                # Agar 2 se kam hain, toh ye account select kar lo
                 if len(services) < 2:
                     selected_key = key
                     break
@@ -66,14 +92,14 @@ def deploy():
             continue
     
     if not selected_key:
-        return jsonify({"status": "error", "message": "All Accounts are FULL!"})
+        return jsonify({"status": "error", "message": "All Accounts are FULL (2/2)!"})
 
-    # --- DEPLOYMENT ---
+    # --- DEPLOY REQUEST ---
     deploy_url = "https://api.render.com/v1/services"
     payload = {
         "type": "web_service",
         "serviceDetails": {
-            "name": f"bot-{len(env_vars)}", # Random name logic
+            "name": f"bot-{len(env_vars)}", 
             "repo": repo,
             "env": "python",
             "plan": "free",
@@ -92,13 +118,11 @@ def deploy():
         return jsonify({
             "status": "success", 
             "url": data['serviceUrl'], 
-            "id": data['id'],
             "account_used": f"...{selected_key[-5:]}"
         })
     else:
         return jsonify({"status": "error", "message": response.text})
 
-# Vercel needs this
 if __name__ == '__main__':
     app.run()
-  
+    
