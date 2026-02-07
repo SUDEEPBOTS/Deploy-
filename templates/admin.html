@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Panel</title>
+    <style>
+        body { background-color: #050505; color: #ff0055; font-family: monospace; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        .box { border: 1px solid #ff0055; padding: 2rem; width: 300px; text-align: center; box-shadow: 0 0 15px rgba(255, 0, 85, 0.2); }
+        input { background: #000; border: 1px solid #333; color: #fff; padding: 10px; width: 90%; margin-bottom: 10px; }
+        button { background: #ff0055; color: #fff; border: none; padding: 10px 20px; cursor: pointer; width: 100%; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h2>🔒 ADMIN ZONE</h2>
+        <input type="password" id="pass" placeholder="Enter Password">
+        <input type="text" id="apiKey" placeholder="Render API Key">
+        <button onclick="addKey()">ADD ACCOUNT</button>
+        <p id="msg"></p>
+    </div>
+
+    <script>
+        async function addKey() {
+            const password = document.getElementById('pass').value;
+            const key = document.getElementById('apiKey').value;
+            
+            const res = await fetch('/api/add_key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password, key })
+            });
+            
+            const data = await res.json();
+            document.getElementById('msg').innerText = data.message || data.error;
+        }
+    </script>
+</body>
+</html>
