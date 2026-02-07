@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Render Deployer</title>
+    <style>
+        body { background-color: #050505; color: #00ff9d; font-family: 'Courier New', monospace; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .container { background: #111; padding: 2rem; border-radius: 15px; border: 1px solid #333; box-shadow: 0 0 20px rgba(0, 255, 157, 0.1); width: 90%; max-width: 500px; }
+        h1 { text-align: center; text-shadow: 0 0 10px #00ff9d; }
+        input, textarea, button { width: 100%; padding: 12px; margin: 10px 0; background: #000; border: 1px solid #333; color: #fff; border-radius: 5px; box-sizing: border-box; }
+        button { background: #00ff9d; color: #000; font-weight: bold; cursor: pointer; transition: 0.3s; }
+        button:hover { background: #00cc7a; box-shadow: 0 0 15px #00ff9d; }
+        .status { margin-top: 20px; padding: 10px; border-radius: 5px; display: none; text-align: center; }
+        .success { background: rgba(0, 255, 157, 0.2); border: 1px solid #00ff9d; }
+        .error { background: rgba(255, 0, 0, 0.2); border: 1px solid red; color: red; }
+        a { color: #555; text-decoration: none; font-size: 0.8rem; display: block; text-align: center; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Auto Deployer</h1>
+        <input type="text" id="repo" placeholder="GitHub Repo URL (Public)">
+        <textarea id="env" rows="6" placeholder="API_ID=12345&#10;API_HASH=abcdef&#10;TOKEN=xxxxx"></textarea>
+        <button onclick="deploy()">DEPLOY NOW</button>
+        <div id="statusBox" class="status"></div>
+        <a href="/admin">Admin Panel</a>
+    </div>
+
+    <script>
+        async function deploy() {
+            const repo = document.getElementById('repo').value;
+            const env = document.getElementById('env').value;
+            const statusBox = document.getElementById('statusBox');
+            
+            statusBox.style.display = "block";
+            statusBox.className = "status";
+            statusBox.innerHTML = "⏳ Scanning Accounts & Deploying...";
+
+            const res = await fetch('/api/deploy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ repo, env })
+            });
+
+            const data = await res.json();
+            if (data.status === 'success') {
+                statusBox.className = "status success";
+                statusBox.innerHTML = `✅ <b>Deployed!</b><br>URL: <a href="${data.url}" target="_blank" style="color:#fff;">${data.url}</a>`;
+            } else {
+                statusBox.className = "status error";
+                statusBox.innerText = "❌ Error: " + data.message;
+            }
+        }
+    </script>
+</body>
+</html>
